@@ -1,216 +1,281 @@
 using MauiBankingExercise.Models;
-using SQLite;
-using SQLiteNetExtensions.Extensions;
-using SQLiteNetExtensionsAsync.Extensions;
+using System.Text;
+using System.Text.Json;
+using System.Net.Http.Headers;
 
 namespace MauiBankingExercise.Services
 {
     public class DatabaseService
     {
-        private SQLiteAsyncConnection _database;
+        private readonly HttpClient _httpClient;
 
-        // INCREMENT THIS NUMBER WHENEVER YOU CHANGE THE SEED DATA
-        private const int DB_VERSION = 2; // Change to 3, 4, 5 etc. when you update seed data
+        public DatabaseService(HttpClient httpClient)
+        {
+            // Create HttpClient with custom handler for localhost SSL issues
+            var handler = new HttpClientHandler()
+            {
+                ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
+            };
+            _httpClient = new HttpClient(handler);
+            _httpClient.BaseAddress = new Uri("https://localhost:7258/api/");
+            _httpClient.DefaultRequestHeaders.Accept.Clear();
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        }
+
+        private JsonSerializerOptions GetJsonOptions()
+        {
+            return new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString
+            };
+        }
 
         public async Task InitAsync()
         {
-            if (_database is not null)
-                return;
-
-            var databasePath = Path.Combine(FileSystem.AppDataDirectory, "Banking.db");
-
-#if DEBUG
-            // DEVELOPMENT ONLY: This will reset database when version changes
-            var versionFile = Path.Combine(FileSystem.AppDataDirectory, "db_version.txt");
-            var currentVersion = File.Exists(versionFile) ?
-                int.Parse(File.ReadAllText(versionFile)) : 0;
-
-            if (currentVersion < DB_VERSION)
-            {
-                // Delete old database if version changed
-                if (File.Exists(databasePath))
-                {
-                    File.Delete(databasePath);
-                }
-                // Save new version
-                File.WriteAllText(versionFile, DB_VERSION.ToString());
-            }
-#endif
-
-            _database = new SQLiteAsyncConnection(databasePath);
-
-            await _database.CreateTableAsync<Customer>();
-            await _database.CreateTableAsync<Account>();
-            await _database.CreateTableAsync<Transaction>();
-            await _database.CreateTableAsync<TransactionType>();
-
-            // Use existing seeder if customers don't exist
-            var customerCount = await _database.Table<Customer>().CountAsync();
-            if (customerCount == 0)
-            {
-                await SeedDataAsync();
-            }
-        }
-
-        // ADD THIS METHOD: Manual reset for development
-        public async Task ResetDatabaseAsync()
-        {
-            await InitAsync();
-
-            // Delete all data in order (due to foreign keys)
-            await _database.DeleteAllAsync<Transaction>();
-            await _database.DeleteAllAsync<Account>();
-            await _database.DeleteAllAsync<Customer>();
-            await _database.DeleteAllAsync<TransactionType>();
-
-            // Re-seed with new data
-            await SeedDataAsync();
+            await Task.CompletedTask;
         }
 
         public async Task<List<Customer>> GetCustomersAsync()
         {
-            await InitAsync();
-            return await _database.GetAllWithChildrenAsync<Customer>();
+            try
+            {
+                var response = await _httpClient.GetAsync("Customers");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var customers = JsonSerializer.Deserialize<List<Customer>>(json, GetJsonOptions());
+                    return customers ?? new List<Customer>();
+                }
+                return new List<Customer>();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error getting customers: {ex.Message}");
+                return new List<Customer>();
+            }
         }
 
         public async Task<Customer> GetCustomerAsync(int customerId)
         {
-            await InitAsync();
-            return await _database.GetWithChildrenAsync<Customer>(customerId);
+            try
+            {
+                var response = await _httpClient.GetAsync($"Customers/{customerId}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var customer = JsonSerializer.Deserialize<Customer>(json, GetJsonOptions());
+                    return customer;
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error getting customer: {ex.Message}");
+                return null;
+            }
         }
 
         public async Task<List<Account>> GetAccountsAsync(int customerId)
         {
-            await InitAsync();
-            return await _database.Table<Account>()
-                .Where(a => a.CustomerId == customerId && a.IsActive)
-                .ToListAsync();
+            try
+            {
+                var response = await _httpClient.GetAsync($"Accounts/customer/{customerId}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    System.Diagnostics.Debug.WriteLine($"Accounts API Response: {json}");
+
+                    var accounts = JsonSerializer.Deserialize<List<Account>>(json, GetJsonOptions());
+                    return accounts ?? new List<Account>();
+                }
+                return new List<Account>();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error getting accounts: {ex.Message}");
+                return new List<Account>();
+            }
         }
 
         public async Task<Account> GetAccountAsync(int accountId)
         {
-            await InitAsync();
-            return await _database.GetAsync<Account>(accountId);
+            try
+            {
+                var response = await _httpClient.GetAsync($"Accounts/{accountId}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var account = JsonSerializer.Deserialize<Account>(json, GetJsonOptions());
+                    return account;
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error getting account: {ex.Message}");
+                return null;
+            }
         }
 
         public async Task<List<Transaction>> GetTransactionsAsync(int accountId)
         {
-            await InitAsync();
-            var transactions = await _database.Table<Transaction>()
-                .Where(t => t.AccountId == accountId)
-                .OrderByDescending(t => t.TransactionDate)
-                .ToListAsync();
-
-            // Load transaction types
-            foreach (var transaction in transactions)
+            try
             {
-                transaction.TransactionType = await _database.GetAsync<TransactionType>(transaction.TransactionTypeId);
-            }
+                var response = await _httpClient.GetAsync($"Transactions/account/{accountId}");
 
-            return transactions;
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var transactions = JsonSerializer.Deserialize<List<Transaction>>(json, GetJsonOptions());
+                    return transactions ?? new List<Transaction>();
+                }
+                return new List<Transaction>();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error getting transactions: {ex.Message}");
+                return new List<Transaction>();
+            }
         }
 
         public async Task<bool> CreateTransactionAsync(int accountId, decimal amount, string transactionType)
         {
-            await InitAsync();
-
             try
             {
-                var account = await GetAccountAsync(accountId);
-                if (account == null) return false;
+                System.Diagnostics.Debug.WriteLine($"Starting transaction for account {accountId}");
 
-                var transactionTypeEntity = await _database.Table<TransactionType>()
-                    .FirstOrDefaultAsync(tt => tt.Name == transactionType);
 
-                if (transactionTypeEntity == null) return false;
+                // Map transaction type
+                int transactionTypeId = transactionType.ToLower() switch
+                {
+                    "deposit" => 1,
+                    "withdrawal" => 2,
+                    _ => 1
+                };
 
-                // Validate withdrawal
-                if (transactionType == "Withdrawal" && account.AccountBalance < amount)
+                // Get the complete account details first
+                var accountResponse = await _httpClient.GetAsync($"Accounts/{accountId}");
+                if (!accountResponse.IsSuccessStatusCode)
+                {
+                    System.Diagnostics.Debug.WriteLine("Failed to get account details");
                     return false;
+                }
 
-                // Update balance
-                if (transactionType == "Deposit")
-                    account.AccountBalance += amount;
-                else if (transactionType == "Withdrawal")
-                    account.AccountBalance -= amount;
+                var accountJson = await accountResponse.Content.ReadAsStringAsync();
+                var accountData = JsonSerializer.Deserialize<JsonElement>(accountJson, GetJsonOptions());
+                System.Diagnostics.Debug.WriteLine($"Account data: {accountJson}");
 
-                // Create transaction
-                var transaction = new Transaction
+                // Get customer details
+                var customerId = accountData.GetProperty("customerId").GetInt32();
+                var customerResponse = await _httpClient.GetAsync($"Customers/{customerId}");
+                if (!customerResponse.IsSuccessStatusCode)
+                {
+                    System.Diagnostics.Debug.WriteLine("Failed to get customer details");
+                    return false;
+                }
+
+                var customerJson = await customerResponse.Content.ReadAsStringAsync();
+                var customerData = JsonSerializer.Deserialize<JsonElement>(customerJson, GetJsonOptions());
+                System.Diagnostics.Debug.WriteLine($"Customer data: {customerJson}");
+
+                // Create the complete request with ALL required fields
+                var completeRequest = new
                 {
                     AccountId = accountId,
                     Amount = amount,
-                    TransactionTypeId = transactionTypeEntity.TransactionTypeId,
+                    TransactionTypeId = transactionTypeId,
+                    Description = $"{transactionType} transaction",
                     TransactionDate = DateTime.Now,
-                    Description = $"{transactionType} transaction"
+                    Account = new
+                    {
+                        AccountId = accountId,
+                        AccountNumber = accountData.GetProperty("accountNumber").GetString(),
+                        IsActive = accountData.GetProperty("isActive").GetBoolean(),
+                        DateOpened = accountData.GetProperty("dateOpened").GetDateTime(),
+                        AccountBalance = accountData.GetProperty("accountBalance").GetDecimal(),
+                        CustomerId = customerId,
+                        AccountTypeId = accountData.GetProperty("accountTypeId").GetInt32(),
+                        Customer = new
+                        {
+                            CustomerId = customerId,
+                            FirstName = customerData.GetProperty("firstName").GetString(),
+                            LastName = customerData.GetProperty("lastName").GetString(),
+                            Email = customerData.GetProperty("email").GetString(),
+                            PhoneNumber = customerData.GetProperty("phoneNumber").GetString(),
+                            PhysicalAddress = customerData.GetProperty("physicalAddress").GetString(),
+                            IdentityNumber = customerData.GetProperty("identityNumber").GetString(),
+                            CustomerTypeId = customerData.GetProperty("customerTypeId").GetInt32(),
+                            GenderTypeId = customerData.GetProperty("genderTypeId").GetInt32(),
+                            RaceTypeId = customerData.GetProperty("raceTypeId").GetInt32(),
+                            Nationality = customerData.GetProperty("nationality").GetString(),
+                            MaritalStatusId = customerData.GetProperty("maritalStatusId").GetInt32(),
+                            EmploymentStatusId = customerData.GetProperty("employmentStatusId").GetInt32(),
+                            BankId = customerData.GetProperty("bankId").GetInt32(),
+                            Bank = new
+                            {
+                                BankId = customerData.GetProperty("bankId").GetInt32(),
+                                BankName = "Default Bank",
+                                BankAddress = "Default Address",
+                                BranchCode = "001",
+                                ContactEmail = "contact@bank.com",
+                                ContactPhoneNumber = "555-BANK",
+                                IsActive = true,
+                                OperatingHours = "9AM-5PM"
+                            },
+                            CustomerType = new
+                            {
+                                CustomerTypeId = customerData.GetProperty("customerTypeId").GetInt32(),
+                                Name = "Individual"
+                            }
+                        },
+                        AccountType = new
+                        {
+                            AccountTypeId = accountData.GetProperty("accountTypeId").GetInt32(),
+                            Name = accountData.GetProperty("accountTypeId").GetInt32() == 1 ? "Checking" : "Savings"
+                        },
+                        Transactions = new object[] { }
+                    },
+                    TransactionType = new
+                    {
+                        TransactionTypeId = transactionTypeId,
+                        Name = transactionType
+                    }
                 };
 
-                await _database.UpdateAsync(account);
-                await _database.InsertAsync(transaction);
+                var json = JsonSerializer.Serialize(completeRequest);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                return true;
+                System.Diagnostics.Debug.WriteLine($"Sending complete transaction (first 500 chars): {json.Substring(0, Math.Min(500, json.Length))}...");
+
+                var response = await _httpClient.PostAsync("Transactions", content);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
+                System.Diagnostics.Debug.WriteLine($"Final response ({response.StatusCode}): {responseContent}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    System.Diagnostics.Debug.WriteLine("Transaction created successfully!");
+                    return true;
+                }
+
+                return false;
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"Error creating transaction: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
                 return false;
             }
         }
 
-        private async Task SeedDataAsync()
+        public async Task ResetDatabaseAsync()
         {
-            // Create transaction types
-            var depositType = new TransactionType { Name = "Deposit" };
-            var withdrawalType = new TransactionType { Name = "Withdrawal" };
-
-            await _database.InsertAsync(depositType);
-            await _database.InsertAsync(withdrawalType);
-
-            // Create customers
-            var customer1 = new Customer
-            {
-                FirstName = "Tashenica",
-                LastName = "Tulley",
-                Email = "tashenicaklientjie@gmail.com",
-                PhoneNumber = "081 811 8484",
-                PhysicalAddress = "14 Gold Str",
-                IdentityNumber = "ID119",
-                Nationality = "RSA"
-            };
-
-            var customer2 = new Customer
-            {
-                FirstName = "Emilio",
-                LastName = "Moses",
-                Email = "emiliomoses0@gmail.com",
-                PhoneNumber = "084 484 8375",
-                PhysicalAddress = "45 Oak Ave",
-                IdentityNumber = "ID002",
-                Nationality = "US"
-            };
-
-            await _database.InsertAsync(customer1);
-            await _database.InsertAsync(customer2);
-
-            // Create accounts
-            var account1 = new Account
-            {
-                AccountNumber = "ACC001",
-                CustomerId = customer1.CustomerId,
-                AccountBalance = 1500.00m,
-                IsActive = true,
-                DateOpened = DateTime.Now.AddYears(-1)
-            };
-
-            var account2 = new Account
-            {
-                AccountNumber = "ACC002",
-                CustomerId = customer2.CustomerId,
-                AccountBalance = 2500.00m,
-                IsActive = true,
-                DateOpened = DateTime.Now.AddMonths(-6)
-            };
-
-            await _database.InsertAsync(account1);
-            await _database.InsertAsync(account2);
+            await Task.CompletedTask;
         }
     }
 }

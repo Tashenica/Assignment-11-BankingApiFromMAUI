@@ -1,9 +1,8 @@
-﻿using Microsoft.Extensions.Http;
+﻿using Microsoft.Extensions.Logging;
 using MauiBankingExercise.Services;
 using MauiBankingExercise.ViewModels;
 using MauiBankingExercise.Views;
-using Microsoft.Extensions.Logging;
-
+using Microsoft.Extensions.Http;
 
 namespace MauiBankingExercise
 {
@@ -17,13 +16,14 @@ namespace MauiBankingExercise
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
-                    fonts.AddFont("OpenSans-SemiBold.ttf", "OpenSansSemiBold");
+                    fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
                 });
 
 #if DEBUG
             builder.Services.AddLogging(configure => configure.AddDebug());
 #endif
-            // Add HttpClient for Api calls
+
+            // Add HttpClient for API calls
             builder.Services.AddHttpClient();
 
             // Register services
