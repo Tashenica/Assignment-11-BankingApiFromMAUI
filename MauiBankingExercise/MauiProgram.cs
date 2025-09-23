@@ -1,7 +1,9 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Http;
 using MauiBankingExercise.Services;
 using MauiBankingExercise.ViewModels;
 using MauiBankingExercise.Views;
+using Microsoft.Extensions.Logging;
+
 
 namespace MauiBankingExercise
 {
@@ -21,6 +23,8 @@ namespace MauiBankingExercise
 #if DEBUG
             builder.Services.AddLogging(configure => configure.AddDebug());
 #endif
+            // Add HttpClient for Api calls
+            builder.Services.AddHttpClient();
 
             // Register services
             builder.Services.AddSingleton<DatabaseService>();
